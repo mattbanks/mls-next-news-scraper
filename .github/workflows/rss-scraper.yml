@@ -1,0 +1,102 @@
+name: MLS NEXT RSS Scraper
+
+on:
+  schedule:
+    # Run every 30 minutes
+    - cron: "*/30 * * * *"
+  workflow_dispatch: # Allow manual triggers
+
+jobs:
+  scrape-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run scraper
+        run: |
+          python mls_next_scraper.py
+
+      - name: Check if RSS content changed
+        id: check_changes
+        run: |
+          # Create a simple content hash to detect changes
+          NEW_HASH=$(sha256sum output/mls_next_news.xml | cut -d' ' -f1)
+          echo "new_hash=$NEW_HASH" >> $GITHUB_OUTPUT
+
+          # Try to get the previous hash (will fail on first run)
+          if curl -s -f -o previous_rss.xml "https://raw.githubusercontent.com/${{ github.repository }}/rss-feeds/mls_next_news.xml"; then
+            OLD_HASH=$(sha256sum previous_rss.xml | cut -d' ' -f1)
+            echo "old_hash=$OLD_HASH" >> $GITHUB_OUTPUT
+            if [ "$NEW_HASH" != "$OLD_HASH" ]; then
+              echo "changed=true" >> $GITHUB_OUTPUT
+              echo "Content changed: $OLD_HASH -> $NEW_HASH"
+            else
+              echo "changed=false" >> $GITHUB_OUTPUT
+              echo "No content changes detected"
+            fi
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "First run or previous file not found, deploying"
+          fi
+
+      - name: Deploy to RSS branch
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          # Configure git
+          git config --global user.name 'RSS Bot'
+          git config --global user.email 'action@github.com'
+
+          # Create or checkout RSS branch
+          git checkout -B rss-feeds
+
+          # Remove all files except RSS output
+          find . -mindepth 1 -not -path './.git*' -not -path './output*' -delete
+
+          # Move RSS files to root of branch
+          mv output/mls_next_news.xml ./
+          mv output/mls_next_articles.json ./
+
+          # Add timestamp and metadata
+          echo "# MLS NEXT RSS Feeds" > README.md
+          echo "" >> README.md
+          echo "**Last updated:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> README.md
+          echo "" >> README.md
+          echo "## Available Feeds" >> README.md
+          echo "" >> README.md
+          echo "- **RSS Feed:** [mls_next_news.xml](./mls_next_news.xml)" >> README.md
+          echo "- **JSON Data:** [mls_next_articles.json](./mls_next_articles.json)" >> README.md
+          echo "" >> README.md
+          echo "## Direct Links" >> README.md
+          echo "" >> README.md
+          echo "- RSS: \`https://raw.githubusercontent.com/${{ github.repository }}/rss-feeds/mls_next_news.xml\`" >> README.md
+          echo "- JSON: \`https://raw.githubusercontent.com/${{ github.repository }}/rss-feeds/mls_next_articles.json\`" >> README.md
+
+          # Commit and push
+          git add .
+          git commit -m "Update RSS feeds - $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          git push origin rss-feeds --force
+
+          echo "✅ RSS feeds deployed to rss-feeds branch"
+
+      - name: Log deployment status
+        run: |
+          if [ "${{ steps.check_changes.outputs.changed }}" = "true" ]; then
+            echo "✅ RSS feeds updated and deployed"
+            echo "📡 RSS URL: https://raw.githubusercontent.com/${{ github.repository }}/rss-feeds/mls_next_news.xml"
+            echo "📊 JSON URL: https://raw.githubusercontent.com/${{ github.repository }}/rss-feeds/mls_next_articles.json"
+          else
+            echo "ℹ️ No changes detected, skipping deployment"
+          fi
