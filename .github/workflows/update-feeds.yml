@@ -1,0 +1,51 @@
+name: Update MLS NEXT News Feeds
+
+on:
+  schedule:
+    # Run every 30 minutes
+    - cron: "*/30 * * * *"
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  update-feeds:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Create output directory
+        run: mkdir -p output
+
+      - name: Run scraper
+        run: python mls_next_scraper.py
+
+      - name: Check if feed files were generated
+        run: |
+          if [ ! -f "output/mls_next_news.xml" ]; then
+            echo "RSS file was not generated. Exiting."
+            exit 1
+          fi
+          if [ ! -f "output/mls_next_articles.json" ]; then
+            echo "JSON file was not generated. Exiting."
+            exit 1
+          fi
+          echo "Both RSS and JSON files generated successfully."
+
+      - name: Commit and push updated feeds
+        run: |
+          git config --local user.email "mattbanks@users.noreply.github.com"
+          git config --local user.name "mattbanks"
+          git add output/
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update MLS NEXT news RSS and JSON feeds [skip ci]"
+          git push
