@@ -7,6 +7,7 @@ and generates an RSS feed.
 
 import requests
 import logging
+import time
 from datetime import datetime, timezone
 from typing import List, Dict, Optional, Tuple, TypedDict
 from bs4 import BeautifulSoup
@@ -15,6 +16,7 @@ import pytz
 from dateutil import parser
 import json
 import re
+import hashlib
 
 # Configure logging
 logging.basicConfig(
@@ -59,29 +61,87 @@ class MLSNextScraper:
         text = text.replace('"', '\\"')
         return text
 
+    @staticmethod
+    def _clean_text_for_rss(text: str) -> str:
+        """Clean and normalize text for RSS feeds."""
+        if not text:
+            return ""
+
+        # Normalize whitespace - replace multiple spaces and newlines with single spaces
+        import re
+        text = re.sub(r'\s+', ' ', text)
+
+        # Strip leading/trailing whitespace
+        text = text.strip()
+
+        # Remove any remaining problematic characters
+        text = text.replace('\r', ' ').replace('\n', ' ')
+
+        # Don't manually escape XML - feedgen handles this automatically
+        return text
+
     def __init__(self):
+        from config import REQUEST_TIMEOUT, REQUEST_DELAY, MAX_RETRIES, RETRY_DELAY, USER_AGENT
+
         self.base_url = "https://www.mlssoccer.com"
         self.news_url = f"{self.base_url}/mlsnext/news/"
         self.session = requests.Session()
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        self.headers = {'User-Agent': USER_AGENT}
         self.session.headers.update(self.headers)
+
+        # Rate limiting and retry settings
+        self.request_timeout = REQUEST_TIMEOUT
+        self.request_delay = REQUEST_DELAY
+        self.max_retries = MAX_RETRIES
+        self.retry_delay = RETRY_DELAY
+        self.last_request_time = 0
+
+    def _rate_limit(self):
+        """Implement rate limiting between requests."""
+        elapsed = time.time() - self.last_request_time
+        if elapsed < self.request_delay:
+            sleep_time = self.request_delay - elapsed
+            logger.debug(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
+            time.sleep(sleep_time)
+        self.last_request_time = time.time()
+
+    def _make_request_with_retry(self, url: str, timeout: Optional[int] = None) -> Optional[requests.Response]:
+        """Make HTTP request with retry logic and rate limiting."""
+        if timeout is None:
+            timeout = self.request_timeout
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                self._rate_limit()
+                logger.debug(f"Making request to {url} (attempt {attempt + 1}/{self.max_retries + 1})")
+
+                response = self.session.get(url, timeout=timeout)
+                response.raise_for_status()
+                return response
+
+            except requests.RequestException as e:
+                if attempt == self.max_retries:
+                    logger.error(f"Failed to fetch {url} after {self.max_retries + 1} attempts: {e}")
+                    return None
+                else:
+                    logger.warning(f"Request failed (attempt {attempt + 1}): {e}. Retrying in {self.retry_delay}s...")
+                    time.sleep(self.retry_delay)
+
+        return None
 
     def fetch_page(self) -> Optional[BeautifulSoup]:
         """Fetch the news page and return BeautifulSoup object."""
         try:
             logger.info(f"Fetching page: {self.news_url}")
-            response = self.session.get(self.news_url, timeout=30)
-            response.raise_for_status()
+            response = self._make_request_with_retry(self.news_url)
+
+            if not response:
+                return None
 
             soup = BeautifulSoup(response.content, 'html.parser')
             logger.info("Page fetched successfully")
             return soup
 
-        except requests.RequestException as e:
-            logger.error(f"Failed to fetch page: {e}")
-            return None
         except Exception as e:
             logger.error(f"Unexpected error fetching page: {e}")
             return None
@@ -100,17 +160,27 @@ class MLSNextScraper:
             ]
 
             hero_article = None
-            for selector in hero_selectors:
+            for i, selector in enumerate(hero_selectors):
                 hero_article = soup.select_one(selector)
                 if hero_article:
+                    logger.debug(f"Found hero article with selector {i+1}: {selector}")
                     break
 
             if not hero_article:
                 # Fallback: look for the first article with fm-card class
                 hero_article = soup.find('article', class_=re.compile(r'fm-card'))
+                if hero_article:
+                    logger.debug("Found hero article using fallback fm-card selector")
+                else:
+                    logger.warning("No hero article found with any selector")
 
             if hero_article:
-                return self._extract_article_data(hero_article, is_hero=True)
+                article_data = self._extract_article_data(hero_article, is_hero=True)
+                if article_data:
+                    logger.info(f"Successfully extracted hero article: {article_data['title']}")
+                    return article_data
+                else:
+                    logger.warning("Hero article found but data extraction failed")
 
             return None
 
@@ -181,31 +251,42 @@ class MLSNextScraper:
     def _extract_article_data(self, article_element: BeautifulSoup, is_hero: bool = False) -> Optional[Article]:
         """Extract article data from a BeautifulSoup article element."""
         try:
+            logger.debug(f"Extracting {'hero' if is_hero else 'regular'} article data")
+
             # Extract title - look for fa-text__title class first
             title_elem = article_element.find(['h1', 'h2', 'h3', 'h4'], class_='fa-text__title')
             if not title_elem:
                 # Fallback to any heading
                 title_elem = article_element.find(['h1', 'h2', 'h3', 'h4'])
+                logger.debug("Used fallback title selector")
 
             if not title_elem:
+                logger.warning("No title element found in article")
                 return None
 
             title = title_elem.get_text(strip=True)
             if not title:
+                logger.warning("Empty title found in article")
                 return None
+
+            logger.debug(f"Found title: {title}")
 
             # Extract link - look for parent anchor tag
             link_elem = article_element.find_parent('a')
             if not link_elem or not link_elem.get('href'):
                 # Fallback to any anchor in the article
                 link_elem = article_element.find('a')
+                logger.debug("Used fallback link selector")
 
             if not link_elem or not link_elem.get('href'):
+                logger.warning(f"No link found for article: {title}")
                 return None
 
             link = link_elem['href']
             if not link.startswith('http'):
                 link = self.base_url + link
+
+            logger.debug(f"Found link: {link}")
 
             # Extract description and date from the actual article page
             description, article_date = self._fetch_article_details(link)
@@ -217,12 +298,16 @@ class MLSNextScraper:
                 image_url = img_elem.get('data-src') or img_elem.get('src')
                 if image_url and not image_url.startswith('http'):
                     image_url = self.base_url + image_url
+                logger.debug(f"Found image: {image_url}")
+            else:
+                logger.debug("No image found for article")
 
             # Use article date if found, otherwise current time
             if not article_date:
                 article_date = datetime.now(timezone.utc)
+                logger.debug("Using current time as fallback date")
 
-            return {
+            article_data = {
                 'title': title,
                 'link': link,
                 'description': description,
@@ -231,6 +316,9 @@ class MLSNextScraper:
                 'is_hero': is_hero
             }
 
+            logger.debug(f"Successfully extracted article: {title[:50]}...")
+            return article_data
+
         except Exception as e:
             logger.error(f"Error extracting article data: {e}")
             return None
@@ -238,8 +326,12 @@ class MLSNextScraper:
     def _fetch_article_details(self, article_url: str) -> Tuple[str, Optional[datetime]]:
         """Fetch article description and date from the individual article page."""
         try:
-            response = requests.get(article_url, headers=self.headers, timeout=30)
-            response.raise_for_status()
+            logger.debug(f"Fetching details for article: {article_url}")
+            response = self._make_request_with_retry(article_url)
+
+            if not response:
+                logger.warning(f"Failed to fetch article details for {article_url}")
+                return "", None
 
             soup = BeautifulSoup(response.content, 'html.parser')
 
@@ -248,6 +340,9 @@ class MLSNextScraper:
             desc_meta = soup.find('meta', {'name': 'description'})
             if desc_meta and desc_meta.get('content'):
                 description = desc_meta['content'].strip()
+                logger.debug(f"Found description: {description[:50]}...")
+            else:
+                logger.debug(f"No description meta tag found for {article_url}")
 
             # Extract date from data-datetime attribute
             article_date = None
@@ -258,13 +353,16 @@ class MLSNextScraper:
                     article_date = parser.parse(date_text)
                     if article_date.tzinfo is None:
                         article_date = pytz.UTC.localize(article_date)
+                    logger.debug(f"Found date: {article_date}")
                 except Exception as e:
-                    logger.warning(f"Could not parse date '{date_text}': {e}")
+                    logger.warning(f"Could not parse date '{date_text}' for {article_url}: {e}")
+            else:
+                logger.debug(f"No date element found for {article_url}")
 
             return description, article_date
 
         except Exception as e:
-            logger.warning(f"Could not fetch article details for {article_url}: {e}")
+            logger.error(f"Unexpected error fetching article details for {article_url}: {e}")
             return "", None
 
     def scrape_articles(self) -> List[Article]:
@@ -309,23 +407,79 @@ class MLSNextScraper:
         """Generate RSS feed from scraped articles."""
         try:
             fg = FeedGenerator()
+
+            # Enhanced RSS channel metadata
             fg.title('MLS NEXT News')
             fg.description('Latest news from MLS NEXT - the top youth soccer development program')
             fg.link(href=self.news_url)
             fg.language('en')
             fg.lastBuildDate(datetime.now(timezone.utc))
 
+            # Optional metadata - add what's compatible
+            try:
+                fg.copyright('© MLS. All rights reserved.')
+            except Exception:
+                pass
+
+            try:
+                fg.managingEditor('noreply@mlssoccer.com (MLS NEXT)')
+            except Exception:
+                pass
+
+            try:
+                fg.webMaster('noreply@mlssoccer.com (MLS NEXT)')
+            except Exception:
+                pass
+
+            # Add RSS 2.0 image
+            try:
+                fg.image(url='https://www.mlssoccer.com/sites/default/files/mls_logo.png',
+                        title='MLS NEXT News',
+                        link=self.news_url,
+                        description='MLS NEXT Logo')
+            except Exception as e:
+                logger.warning(f"Could not add RSS image: {e}")
+
             for article in articles:
                 fe = fg.add_entry()
-                fe.title(self._escape_xml_text(article['title']))
+
+                # Clean and normalize text for RSS - feedgen handles XML escaping automatically
+                clean_title = self._clean_text_for_rss(article['title'])
+                clean_description = self._clean_text_for_rss(article['description'])
+
+                fe.title(clean_title)
                 fe.link(href=article['link'])
-                fe.description(self._escape_xml_text(article['description']))
+                fe.description(clean_description)
                 fe.published(article['date'])
 
-                # Add image if available
+                # Generate unique GUID based on article URL
+                article_guid = self._generate_guid(article['link'])
+                fe.guid(article_guid, permalink=True)
+
+                # Add categories for better organization (if supported)
+                try:
+                    fe.category('MLS NEXT')
+                    if 'generation adidas cup' in clean_title.lower():
+                        fe.category('Generation adidas Cup')
+                    if 'all-star' in clean_title.lower():
+                        fe.category('All-Star Game')
+                    if 'cup' in clean_title.lower():
+                        fe.category('Cup Competition')
+                    if 'award' in clean_title.lower():
+                        fe.category('Awards')
+                    if 'recap' in clean_title.lower():
+                        fe.category('Monthly Recap')
+                except Exception:
+                    # Categories not supported in this feedgen version
+                    pass
+
+                # Add image if available - create proper HTML content
                 if article['image_url']:
-                    escaped_title = self._escape_xml_text(article['title'])
-                    fe.content(f'<img src="{article["image_url"]}" alt="{escaped_title}" />', type='html')
+                    # Create rich content with both image and description
+                    html_content = f'<p>{clean_description}</p>'
+                    if article['image_url']:
+                        html_content = f'<img src="{article["image_url"]}" alt="{clean_title}" style="max-width: 100%; height: auto;" /><br/><br/>{html_content}'
+                    fe.content(html_content, type='html')
 
             # Write RSS feed to file
             fg.rss_file(output_file)
@@ -336,6 +490,11 @@ class MLSNextScraper:
             logger.error(f"Error generating RSS feed: {e}")
             return False
 
+    def _generate_guid(self, url: str) -> str:
+        """Generate a unique GUID for an article based on its URL."""
+        # Create a stable hash of the URL
+        return hashlib.md5(url.encode('utf-8')).hexdigest()
+
     def save_articles_json(self, articles: List[Article], output_file: str = "mls_next_articles.json") -> bool:
         """Save articles to JSON file for debugging/backup."""
         try:
@@ -345,9 +504,9 @@ class MLSNextScraper:
                 article_copy = article.copy()
                 article_copy['date'] = article_copy['date'].isoformat()
 
-                # Escape text fields for JSON
-                article_copy['title'] = self._escape_json_text(article_copy['title'])
-                article_copy['description'] = self._escape_json_text(article_copy['description'])
+                # Clean and normalize text fields for JSON (same as RSS)
+                article_copy['title'] = self._clean_text_for_rss(article_copy['title'])
+                article_copy['description'] = self._clean_text_for_rss(article_copy['description'])
 
                 articles_for_json.append(article_copy)
 
