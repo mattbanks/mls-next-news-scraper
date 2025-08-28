@@ -17,6 +17,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -47,9 +48,16 @@ jobs:
           echo "Both RSS and JSON files generated successfully."
 
       - name: Commit and push updated feeds
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --local user.email "mattbanks@users.noreply.github.com"
           git config --local user.name "mattbanks"
           git add output/
-          git diff --quiet && git diff --staged --quiet || git commit -m "Update MLS NEXT news RSS and JSON feeds [skip ci]"
-          git push
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update MLS NEXT news RSS and JSON feeds [skip ci]"
+            git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/mattbanks/mls-next-news-scraper.git
+            git push origin main
+          fi
