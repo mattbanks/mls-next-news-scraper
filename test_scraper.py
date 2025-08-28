@@ -5,7 +5,6 @@ Run this to test the scraper functionality.
 """
 
 import sys
-import os
 from pathlib import Path
 
 # Add the current directory to Python path
