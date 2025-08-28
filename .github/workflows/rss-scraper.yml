@@ -37,7 +37,7 @@ jobs:
           echo "new_hash=$NEW_HASH" >> $GITHUB_OUTPUT
 
           # Try to get the previous hash (will fail on first run)
-          if curl -s -f -o previous_rss.xml "https://raw.githubusercontent.com/${{ github.repository }}/rss-feeds/mls_next_news.xml"; then
+          if curl -s -f -o previous_rss.xml "https://mattbanks.github.io/mls-next-news-scraper/mls_next_news.xml"; then
             OLD_HASH=$(sha256sum previous_rss.xml | cut -d' ' -f1)
             echo "old_hash=$OLD_HASH" >> $GITHUB_OUTPUT
             if [ "$NEW_HASH" != "$OLD_HASH" ]; then
@@ -81,8 +81,8 @@ jobs:
           echo "" >> README.md
           echo "## Direct Links" >> README.md
           echo "" >> README.md
-          echo "- RSS: \`https://raw.githubusercontent.com/${{ github.repository }}/rss-feeds/mls_next_news.xml\`" >> README.md
-          echo "- JSON: \`https://raw.githubusercontent.com/${{ github.repository }}/rss-feeds/mls_next_articles.json\`" >> README.md
+          echo "- RSS: \`https://mattbanks.github.io/mls-next-news-scraper/mls_next_news.xml\`" >> README.md
+          echo "- JSON: \`https://mattbanks.github.io/mls-next-news-scraper/mls_next_articles.json\`" >> README.md
 
           # Commit and push
           git add .
@@ -95,8 +95,8 @@ jobs:
         run: |
           if [ "${{ steps.check_changes.outputs.changed }}" = "true" ]; then
             echo "✅ RSS feeds updated and deployed"
-            echo "📡 RSS URL: https://raw.githubusercontent.com/${{ github.repository }}/rss-feeds/mls_next_news.xml"
-            echo "📊 JSON URL: https://raw.githubusercontent.com/${{ github.repository }}/rss-feeds/mls_next_articles.json"
+            echo "📡 RSS URL: https://mattbanks.github.io/mls-next-news-scraper/mls_next_news.xml"
+            echo "📊 JSON URL: https://mattbanks.github.io/mls-next-news-scraper/mls_next_articles.json"
           else
             echo "ℹ️ No changes detected, skipping deployment"
           fi
