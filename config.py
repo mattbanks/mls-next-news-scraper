@@ -16,6 +16,9 @@ MLS_BASE_URL = "https://www.mlssoccer.com"
 # Scraping settings
 MAX_ARTICLES = 15
 REQUEST_TIMEOUT = 30
+REQUEST_DELAY = 1.5  # Delay between requests in seconds
+MAX_RETRIES = 3  # Maximum number of retries for failed requests
+RETRY_DELAY = 2.0  # Delay between retries in seconds
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 
 # Output files
