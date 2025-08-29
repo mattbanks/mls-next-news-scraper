@@ -372,35 +372,59 @@ class MLSNextScraper:
             return []
 
         articles = []
+        logger.info("Starting article extraction process...")
 
         # Extract hero article
         hero_article = self.extract_hero_article(soup)
         if hero_article:
             articles.append(hero_article)
+            logger.info(f"✅ Hero article extracted: {hero_article['title'][:50]}...")
+        else:
+            logger.warning("❌ No hero article found")
 
         # Extract horizontal articles
         horizontal_articles = self.extract_sidebar_articles(soup)
         articles.extend(horizontal_articles)
+        logger.info(f"✅ Horizontal articles extracted: {len(horizontal_articles)} articles")
 
         # Extract remaining articles
         remaining_articles = self.extract_below_articles(soup)
         articles.extend(remaining_articles)
+        logger.info(f"✅ Remaining articles extracted: {len(remaining_articles)} articles")
 
         # Remove duplicates based on title
         seen_titles = set()
         unique_articles = []
+        duplicate_count = 0
+
         for article in articles:
             if article['title'] not in seen_titles:
                 seen_titles.add(article['title'])
                 unique_articles.append(article)
+            else:
+                duplicate_count += 1
+                logger.debug(f"Duplicate article found: {article['title'][:50]}...")
+
+        if duplicate_count > 0:
+            logger.info(f"🔄 Removed {duplicate_count} duplicate articles")
 
         # Sort by date (newest first)
         unique_articles.sort(key=lambda x: x['date'], reverse=True)
 
         # Limit to 15 articles
         final_articles = unique_articles[:15]
+        if len(unique_articles) > 15:
+            logger.info(f"📊 Limited to 15 articles (had {len(unique_articles)} total)")
 
-        logger.info(f"Successfully scraped {len(final_articles)} unique articles")
+        # Log summary of final articles
+        logger.info("📰 Final article summary:")
+        for i, article in enumerate(final_articles):
+            date_str = article['date'].strftime('%Y-%m-%d %H:%M')
+            hero_indicator = "⭐ " if article['is_hero'] else "  "
+            logger.info(f"   {i+1:2d}. {hero_indicator}{article['title'][:60]}{'...' if len(article['title']) > 60 else ''}")
+            logger.info(f"       📅 {date_str} | 🔗 {article['link']}")
+
+        logger.info(f"✅ Successfully scraped {len(final_articles)} unique articles")
         return final_articles
 
     def generate_rss(self, articles: List[Article], output_file: str = "mls_next_news.xml") -> bool:

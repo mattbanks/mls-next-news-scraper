@@ -60,12 +60,51 @@ jobs:
                   echo "$line" >> $GITHUB_OUTPUT
               elif [[ $line == changed=* ]]; then
                   echo "$line" >> $GITHUB_OUTPUT
+              elif [[ $line == reason=* ]]; then
+                  echo "$line" >> $GITHUB_OUTPUT
+              elif [[ $line == added_count=* ]]; then
+                  echo "$line" >> $GITHUB_OUTPUT
+              elif [[ $line == removed_count=* ]]; then
+                  echo "$line" >> $GITHUB_OUTPUT
+              elif [[ $line == modified_count=* ]]; then
+                  echo "$line" >> $GITHUB_OUTPUT
               fi
           done
 
           # Also log the full output for debugging
           echo "Full output:"
           echo "$OUTPUT"
+
+      - name: Log change details
+        run: |
+          echo "=== Change Detection Summary ==="
+          echo "Changed: ${{ steps.check_changes.outputs.changed }}"
+          echo "Reason: ${{ steps.check_changes.outputs.reason }}"
+          echo "New Hash: ${{ steps.check_changes.outputs.new_hash }}"
+          if [ "${{ steps.check_changes.outputs.prev_hash }}" != "" ]; then
+            echo "Previous Hash: ${{ steps.check_changes.outputs.prev_hash }}"
+          fi
+          if [ "${{ steps.check_changes.outputs.added_count }}" != "" ]; then
+            echo "Added Articles: ${{ steps.check_changes.outputs.added_count }}"
+          fi
+          if [ "${{ steps.check_changes.outputs.removed_count }}" != "" ]; then
+            echo "Removed Articles: ${{ steps.check_changes.outputs.removed_count }}"
+          fi
+          if [ "${{ steps.check_changes.outputs.modified_count }}" != "" ]; then
+            echo "Modified Articles: ${{ steps.check_changes.outputs.modified_count }}"
+          fi
+          echo "================================"
+
+      - name: Display detailed article changes
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          echo "=== DETAILED ARTICLE CHANGES ==="
+          echo "Running detailed change analysis..."
+
+          # Run the change detection script again to get detailed output
+          python scripts/check_content_changes.py output/mls_next_news.xml ../rss-feeds-checkout/mls_next_news.xml
+
+          echo "================================="
 
       - name: Deploy to RSS branch
         if: steps.check_changes.outputs.changed == 'true'
