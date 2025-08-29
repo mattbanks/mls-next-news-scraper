@@ -36,10 +36,12 @@ python mls_next_scraper.py
 
 ## Output Files
 
-The scraper generates two output files in the `output/` directory:
+The scraper generates two output files in the `output/` directory (these are temporary and not committed):
 
 - **`mls_next_news.xml`**: RSS feed for your feed reader
 - **`mls_next_articles.json`**: JSON backup with all extracted article data
+
+**Note**: These files are generated locally for testing and by the GitHub workflow. The actual RSS feeds are served from the `rss-feeds` branch at the URLs below.
 
 ## RSS Feed Details
 
@@ -67,7 +69,7 @@ Edit `config.py` to customize:
 Add this URL to your preferred RSS reader:
 
 ```
-https://mattbanks.github.io/mls-next-news-scraper/output/mls_next_news.xml
+https://mattbanks.github.io/mls-next-news-scraper/mls_next_news.xml
 ```
 
 ### **JSON Feed (for developers/APIs)**
@@ -75,7 +77,7 @@ https://mattbanks.github.io/mls-next-news-scraper/output/mls_next_news.xml
 Access structured data at:
 
 ```
-https://mattbanks.github.io/mls-next-news-scraper/output/mls_next_articles.json
+https://mattbanks.github.io/mls-next-news-scraper/mls_next_articles.json
 ```
 
 ## Troubleshooting
@@ -87,9 +89,35 @@ https://mattbanks.github.io/mls-next-news-scraper/output/mls_next_articles.json
 
 ## Technical Details
 
-- **Python 3.8+** with robust error handling
+- **Python 3.13+** with robust error handling
 - **Dependencies**: requests, beautifulsoup4, feedgen, lxml, python-dateutil, pytz
 - **Multiple fallback strategies** for website changes
+- **Smart content detection** to prevent unnecessary deployments
+- **Clean architecture** with separate scripts for maintainability
+
+## Scripts
+
+### **Content Change Detection**
+
+The workflow uses smart content detection to only deploy when articles actually change:
+
+```bash
+# Manual content comparison
+python scripts/check_content_changes.py output/mls_next_news.xml previous_file.xml
+```
+
+### **Main Scraper**
+
+```bash
+python mls_next_scraper.py
+```
+
+### **Testing**
+
+```bash
+# Test the scraper functionality locally
+python test_scraper.py
+```
 
 ## Contributing
 

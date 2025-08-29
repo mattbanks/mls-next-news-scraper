@@ -50,6 +50,9 @@ Thumbs.db
 test_output.xml
 test_output.json
 
+# Generated RSS outputs (regenerated on each workflow run)
+output/
+
 # Logs
 *.log
 

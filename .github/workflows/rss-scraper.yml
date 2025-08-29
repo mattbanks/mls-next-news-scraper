@@ -2,13 +2,16 @@ name: MLS NEXT RSS Scraper
 
 on:
   schedule:
-    # Run every 30 minutes
-    - cron: "*/30 * * * *"
+    # Run every 30 minutes during active hours (6 AM - 12 AM ET = 10 AM - 4 AM UTC)
+    - cron: "*/30 10-23,0-3 * * *"
+    # Run hourly during overnight hours (12 AM - 6 AM ET = 4 AM - 10 AM UTC)
+    - cron: "0 4-9 * * *"
   workflow_dispatch: # Allow manual triggers
 
 jobs:
   scrape-and-deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 5 # Prevent long-running jobs
 
     steps:
       - name: Checkout main branch
@@ -19,38 +22,50 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.9"
+          python-version: "3.13"
+          cache: "pip" # Cache pip dependencies
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip install --cache-dir ~/.cache/pip -r requirements.txt
 
       - name: Run scraper
         run: |
           python mls_next_scraper.py
 
+      - name: Checkout RSS branch for comparison
+        run: |
+          # Clone the RSS branch to compare content
+          git clone --branch rss-feeds --single-branch https://github.com/${{ github.repository }}.git ../rss-feeds-checkout || echo "Branch doesn't exist yet"
+
       - name: Check if RSS content changed
         id: check_changes
         run: |
-          # Create a simple content hash to detect changes
-          NEW_HASH=$(sha256sum output/mls_next_news.xml | cut -d' ' -f1)
-          echo "new_hash=$NEW_HASH" >> $GITHUB_OUTPUT
+          # Use the external Python script for content comparison
+          OUTPUT=$(python scripts/check_content_changes.py output/mls_next_news.xml ../rss-feeds-checkout/mls_next_news.xml)
 
-          # Try to get the previous hash (will fail on first run)
-          if curl -s -f -o previous_rss.xml "https://mattbanks.github.io/mls-next-news-scraper/mls_next_news.xml"; then
-            OLD_HASH=$(sha256sum previous_rss.xml | cut -d' ' -f1)
-            echo "old_hash=$OLD_HASH" >> $GITHUB_OUTPUT
-            if [ "$NEW_HASH" != "$OLD_HASH" ]; then
-              echo "changed=true" >> $GITHUB_OUTPUT
-              echo "Content changed: $OLD_HASH -> $NEW_HASH"
-            else
-              echo "changed=false" >> $GITHUB_OUTPUT
-              echo "No content changes detected"
-            fi
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-            echo "First run or previous file not found, deploying"
-          fi
+          # Parse the output and set GitHub output variables
+          echo "$OUTPUT" | while IFS= read -r line; do
+              if [[ $line == new_hash=* ]]; then
+                  echo "$line" >> $GITHUB_OUTPUT
+              elif [[ $line == prev_hash=* ]]; then
+                  echo "$line" >> $GITHUB_OUTPUT
+              elif [[ $line == changed=* ]]; then
+                  echo "$line" >> $GITHUB_OUTPUT
+              fi
+          done
+
+          # Also log the full output for debugging
+          echo "Full output:"
+          echo "$OUTPUT"
 
       - name: Deploy to RSS branch
         if: steps.check_changes.outputs.changed == 'true'
