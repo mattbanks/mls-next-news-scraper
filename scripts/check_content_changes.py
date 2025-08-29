@@ -3,6 +3,7 @@
 Content change detection script for MLS NEXT RSS scraper.
 Compares RSS content to determine if deployment is needed.
 Only considers title and link changes (description changes are ignored).
+Now includes URL normalization to detect when MLS changes URL paths but articles are the same.
 """
 
 import xml.etree.ElementTree as ET
@@ -10,6 +11,69 @@ import hashlib
 import json
 import os
 import sys
+import re
+from urllib.parse import urlparse, parse_qs
+
+# Configuration
+ENABLE_URL_NORMALIZATION = True  # Set to False to disable URL normalization
+MLS_DOMAINS = ['mlssoccer.com', 'www.mlssoccer.com']  # MLS domains to normalize
+
+
+def normalize_mls_url(url: str) -> str:
+    """
+    Normalize MLS URLs to detect when articles are the same despite URL path changes.
+
+    MLS often changes URL structures (e.g., /allstar/2025/news/ -> /mlsnext/news/)
+    but the articles are the same content. This function extracts the key identifying
+    information to help detect these cases.
+
+    If URL normalization is disabled, returns the original URL unchanged.
+    """
+    if not ENABLE_URL_NORMALIZATION:
+        return url
+
+    if not url or not any(domain in url for domain in MLS_DOMAINS):
+        return url
+
+    try:
+        parsed = urlparse(url)
+        path = parsed.path.lower()
+
+        # Extract the article slug (the last part after the last slash)
+        path_parts = [p for p in path.split('/') if p]
+
+        # Handle different MLS URL patterns
+        if len(path_parts) >= 2:
+            # Check if this is a news listing page (ends with /news/)
+            if path_parts[-1] == 'news' and len(path_parts) >= 2:
+                # This is a news listing page, not an article
+                return url
+
+            # Look for the article slug (usually the last meaningful part)
+            article_slug = None
+
+            # Handle various MLS URL patterns
+            if len(path_parts) >= 3 and path_parts[-2] == 'news':
+                # Pattern: /category/news/article-slug
+                article_slug = path_parts[-1]
+            elif len(path_parts) >= 4 and path_parts[-3] == 'news':
+                # Pattern: /category/year/news/article-slug
+                article_slug = path_parts[-1]
+            else:
+                # Fallback: look for the last meaningful part
+                for part in reversed(path_parts):
+                    if part and part != 'news' and not part.isdigit() and len(part) > 3:
+                        article_slug = part
+                        break
+
+            if article_slug:
+                # Create a normalized version that focuses on the article identifier
+                # rather than the category path
+                return f"mlssoccer.com/article/{article_slug}"
+
+        return url
+    except Exception:
+        return url
 
 
 def extract_article_data(rss_file_path):
@@ -35,16 +99,17 @@ def extract_article_data(rss_file_path):
 
 
 def create_content_hash(articles):
-    """Create a hash based on article content (title and link only)."""
+    """Create a hash based on article content (title and normalized link only)."""
     if not articles:
         return None
 
-    # Only include title and link for change detection (ignore descriptions)
+    # Include title and normalized link for change detection
     content_for_hash = []
     for article in articles:
+        normalized_link = normalize_mls_url(article['link'])
         content_for_hash.append({
             'title': article['title'],
-            'link': article['link']
+            'link': normalized_link
         })
 
     content_str = json.dumps(content_for_hash, sort_keys=True)
@@ -67,13 +132,28 @@ def compare_articles(prev_articles, new_articles):
             'added': [],
             'removed': [],
             'modified': [],
-            'unchanged': []
+            'unchanged': [],
+            'url_normalized': []  # Track URL normalization cases
         }
     }
 
-    # Create lookup dictionaries
-    prev_lookup = {article['title']: article for article in prev_articles}
-    new_lookup = {article['title']: article for article in new_articles}
+    # Create lookup dictionaries using normalized URLs
+    prev_lookup = {}
+    new_lookup = {}
+
+    for article in prev_articles:
+        normalized_link = normalize_mls_url(article['link'])
+        prev_lookup[article['title']] = {
+            **article,
+            'normalized_link': normalized_link
+        }
+
+    for article in new_articles:
+        normalized_link = normalize_mls_url(article['link'])
+        new_lookup[article['title']] = {
+            **article,
+            'normalized_link': normalized_link
+        }
 
     # Find added articles
     for title in new_lookup:
@@ -91,27 +171,42 @@ def compare_articles(prev_articles, new_articles):
                 'link': prev_lookup[title]['link']
             })
 
-    # Find modified articles - ONLY check title and link changes
-    # Description changes are ignored since they're not visible to RSS readers
+    # Find modified articles - check title and normalized link changes
     for title in new_lookup:
         if title in prev_lookup:
             prev_article = prev_lookup[title]
             new_article = new_lookup[title]
 
-            # Only consider title or link changes as modifications
-            if (prev_article['title'] != new_article['title'] or
+            # Check if this is a URL normalization case
+            if (prev_article['normalized_link'] == new_article['normalized_link'] and
                 prev_article['link'] != new_article['link']):
+                # Same article, different URL path - this is a URL normalization case
+                changes['details']['url_normalized'].append({
+                    'title': title,
+                    'prev_link': prev_article['link'],
+                    'new_link': new_article['link'],
+                    'normalized_link': new_article['normalized_link']
+                })
+                # Don't count this as a modification
+                changes['details']['unchanged'].append(title)
+                continue
+
+            # Check for actual modifications
+            if (prev_article['title'] != new_article['title'] or
+                prev_article['normalized_link'] != new_article['normalized_link']):
                 changes['details']['modified'].append({
                     'title': title,
                     'prev_title': prev_article['title'],
                     'new_title': new_article['title'],
                     'prev_link': prev_article['link'],
-                    'new_link': new_article['link']
+                    'new_link': new_article['link'],
+                    'prev_normalized': prev_article['normalized_link'],
+                    'new_normalized': new_article['normalized_link']
                 })
             else:
                 changes['details']['unchanged'].append(title)
 
-    # Determine if there are actual changes
+    # Determine if there are actual changes (excluding URL normalization)
     has_changes = (len(changes['details']['added']) > 0 or
                    len(changes['details']['removed']) > 0 or
                    len(changes['details']['modified']) > 0)
@@ -128,6 +223,8 @@ def compare_articles(prev_articles, new_articles):
             change_reasons.append(f"{len(changes['details']['modified'])} modified article(s)")
 
         changes['reason'] = f"Content changed: {', '.join(change_reasons)}"
+    elif changes['details']['url_normalized']:
+        changes['reason'] = f"No content changes detected (URLs normalized: {len(changes['details']['url_normalized'])} article(s))"
 
     return changes
 
@@ -141,8 +238,11 @@ def main():
         print("  python check_content_changes.py output/mls_next_news.xml")
         print("  python check_content_changes.py output/mls_next_news.xml ../rss-feeds-checkout/mls_next_news.xml")
         print()
-        print("This script only detects changes in article titles and links.")
+        print("This script only detects changes in article titles and normalized links.")
         print("Description changes are ignored since they're not visible to RSS readers.")
+        print("URL path changes (when articles are the same) are also ignored.")
+        print()
+        print(f"URL Normalization: {'ENABLED' if ENABLE_URL_NORMALIZATION else 'DISABLED'}")
         sys.exit(1)
 
     # Check for help flag
@@ -156,9 +256,16 @@ def main():
         print("✅ New articles added")
         print("✅ Articles removed")
         print("✅ Article titles changed")
-        print("✅ Article links changed")
+        print("✅ Article content changed (different normalized URLs)")
         print("❌ Description changes (ignored)")
         print("❌ Metadata changes (ignored)")
+        print("❌ URL path changes when articles are the same (ignored)")
+        print()
+        print(f"URL Normalization: {'ENABLED' if ENABLE_URL_NORMALIZATION else 'DISABLED'}")
+        if ENABLE_URL_NORMALIZATION:
+            print("   This helps prevent false positives when MLS changes URL paths.")
+        else:
+            print("   URL normalization is disabled - all URL changes will be treated as modifications.")
         print()
         print("Examples:")
         print("  python check_content_changes.py output/mls_next_news.xml")
@@ -197,6 +304,7 @@ def main():
                     print(f"added_count={len(changes['details']['added'])}")
                     print(f"removed_count={len(changes['details']['removed'])}")
                     print(f"modified_count={len(changes['details']['modified'])}")
+                    print(f"url_normalized_count={len(changes['details']['url_normalized'])}")
 
                     # Log detailed article changes
                     if changes['details']['added']:
@@ -219,8 +327,18 @@ def main():
                             print(f"🔄 {article['title']}")
                             if article['prev_title'] != article['new_title']:
                                 print(f"   Title: {article['prev_title']} → {article['new_title']}")
+                            if article['prev_normalized'] != article['new_normalized']:
+                                print(f"   Normalized Link: {article['prev_normalized']} → {article['new_normalized']}")
                             if article['prev_link'] != article['new_link']:
                                 print(f"   Link: {article['prev_link']} → {article['new_link']}")
+                            print()
+
+                    if changes['details']['url_normalized']:
+                        print("=== URL NORMALIZED ARTICLES ===")
+                        for article in changes['details']['url_normalized']:
+                            print(f"🔗 {article['title']}")
+                            print(f"   Link: {article['prev_link']} → {article['new_link']}")
+                            print(f"   Normalized: {article['normalized_link']}")
                             print()
 
                 else:

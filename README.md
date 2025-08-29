@@ -1,25 +1,33 @@
 # MLS NEXT News Scraper
 
-A robust Python-based web scraper that extracts news articles from the [MLS NEXT news page](https://www.mlssoccer.com/mlsnext/news/) and generates an RSS feed for easy consumption in feed readers.
+A Python-based web scraper that extracts news articles from the MLS NEXT section of mlssoccer.com and generates RSS feeds.
 
 ## Features
 
-- 🎯 **Smart Article Extraction**: Automatically identifies and extracts articles from different page sections:
-  - Hero article (main featured article)
-  - Sidebar articles (5 smaller articles to the right)
-  - Below articles (additional articles below the main content)
-- 📡 **RSS Feed Generation**: Creates a standard RSS 2.0 feed with article metadata
-- 🔄 **Duplicate Prevention**: Removes duplicate articles based on title
-- 📅 **Date Handling**: Extracts and parses article dates, with fallback to current time
-- 🖼️ **Image Support**: Includes article images in the RSS feed when available
-- 📊 **JSON Export**: Saves extracted articles to JSON for debugging and backup
-- 🚀 **GitHub Actions Integration**: Automated execution every 30 minutes
+- **Automated Scraping**: Scrapes MLS NEXT news articles automatically
+- **RSS Feed Generation**: Creates standard RSS feeds for news readers
+- **JSON Output**: Provides structured JSON data for programmatic access
+- **Smart Change Detection**: Only deploys when content actually changes
+- **URL Normalization**: Prevents false positives when MLS changes URL paths but articles remain the same
+- **GitHub Actions Integration**: Automated execution every 30 minutes
+
+## URL Normalization
+
+The scraper now includes intelligent URL normalization to handle cases where MLS changes URL structures without changing article content. This prevents unnecessary deployments when:
+
+- MLS redirects articles from `/allstar/2025/news/` to `/mlsnext/news/`
+- MLS moves articles from `/generation-adidas-cup/news/` to `/mlsnext/news/`
+- Any other URL path restructuring that doesn't change the actual article
+
+The system extracts the article slug from URLs and normalizes them to detect when articles are the same despite different paths.
 
 ## Quick Start
 
 ### GitHub Actions (Recommended)
 
 - **Feeds**: Automatically updated every 30 minutes
+- **RSS URL**: `https://mattbanks.github.io/mls-next-news-scraper/mls_next_news.xml`
+- **JSON URL**: `https://mattbanks.github.io/mls-next-news-scraper/mls_next_articles.json`
 
 ### Local Execution
 
@@ -34,58 +42,95 @@ A robust Python-based web scraper that extracts news articles from the [MLS NEXT
 python mls_next_scraper.py
 ```
 
-## Output Files
+## Installation
 
-The scraper generates two output files in the `output/` directory (these are temporary and not committed):
+1. Clone the repository:
 
-- **`mls_next_news.xml`**: RSS feed for your feed reader
-- **`mls_next_articles.json`**: JSON backup with all extracted article data
+```bash
+git clone https://github.com/mattbanks/mls-next-news-scraper.git
+cd mls-next-news-scraper
+```
 
-**Note**: These files are generated locally for testing and by the GitHub workflow. The actual RSS feeds are served from the `rss-feeds` branch at the URLs below.
+2. Install dependencies:
 
-## RSS Feed Details
+```bash
+pip install -r requirements.txt
+```
 
-The generated RSS feed includes:
+3. Configure the scraper (optional):
 
-- **Title**: Article headline
-- **Link**: Direct link to the full article
-- **Description**: Article summary/excerpt
-- **Publication Date**: Article publication date
-- **Image**: Article featured image (when available)
+```bash
+cp config.py.example config.py
+# Edit config.py with your preferred settings
+```
+
+## Usage
+
+### Basic Scraping
+
+Run the scraper directly:
+
+```bash
+python mls_next_scraper.py
+```
+
+Or use the shell script:
+
+```bash
+./run_scraper.sh
+```
+
+### Change Detection
+
+Check if content has changed:
+
+```bash
+python scripts/check_content_changes.py output/mls_next_news.xml
+```
+
+Compare with a previous version:
+
+```bash
+python scripts/check_content_changes.py output/mls_next_news.xml previous_version.xml
+```
+
+### Testing
+
+Test URL normalization:
+
+```bash
+python scripts/test_url_normalization.py
+```
+
+Test change detection:
+
+```bash
+python scripts/test_change_detection.py
+```
+
+## Output
+
+The scraper generates:
+
+- `output/mls_next_news.xml` - RSS feed
+- `output/mls_next_articles.json` - Structured JSON data
 
 ## Configuration
 
-Edit `config.py` to customize:
+Key configuration options in `config.py`:
 
-- Maximum number of articles (default: 15)
-- Request timeout (default: 30 seconds)
-- Output file paths
-- Logging level
+- `REQUEST_TIMEOUT`: HTTP request timeout (default: 30 seconds)
+- `REQUEST_DELAY`: Delay between requests (default: 1 second)
+- `MAX_RETRIES`: Maximum retry attempts (default: 3)
+- `USER_AGENT`: Custom user agent string
 
-## 📱 **Feed Access**
+## GitHub Actions
 
-### **RSS Feed (for feed readers)**
+The repository includes GitHub Actions workflows for:
 
-Add this URL to your preferred RSS reader:
-
-```
-https://mattbanks.github.io/mls-next-news-scraper/mls_next_news.xml
-```
-
-### **JSON Feed (for developers/APIs)**
-
-Access structured data at:
-
-```
-https://mattbanks.github.io/mls-next-news-scraper/mls_next_articles.json
-```
-
-## Troubleshooting
-
-- **No articles**: Check website structure and internet connectivity
-- **Feeds not updating**: Verify GitHub Actions are enabled
-- **Local errors**: Ensure dependencies are installed and Python 3.8+
-- **Debug mode**: `logging.basicConfig(level=logging.DEBUG)`
+- Automated scraping and deployment
+- RSS feed updates
+- Content change detection with URL normalization
 
 ## Technical Details
 
@@ -95,29 +140,9 @@ https://mattbanks.github.io/mls-next-news-scraper/mls_next_articles.json
 - **Smart content detection** to prevent unnecessary deployments
 - **Clean architecture** with separate scripts for maintainability
 
-## Scripts
+## Troubleshooting
 
-### **Content Change Detection**
-
-The workflow uses smart content detection to only deploy when articles actually change:
-
-```bash
-# Manual content comparison
-python scripts/check_content_changes.py output/mls_next_news.xml previous_file.xml
-```
-
-### **Main Scraper**
-
-```bash
-python mls_next_scraper.py
-```
-
-### **Testing**
-
-```bash
-# Test the scraper functionality locally
-python test_scraper.py
-```
+See `TROUBLESHOOTING.md` for common issues and solutions.
 
 ## Contributing
 
@@ -125,11 +150,7 @@ Fork, make changes, test, and submit a pull request.
 
 ## License
 
-This project is open source and available under the [MIT License](LICENSE).
-
-## Support
-
-Check troubleshooting section, review GitHub Actions logs, or open an issue.
+This project is open source and available under the MIT License.
 
 ---
 
